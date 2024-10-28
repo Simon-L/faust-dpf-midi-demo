@@ -1,12 +1,103 @@
-/*
- * ImGui plugin example
- * Copyright (C) 2021 Jean Pierre Cimalando <jp-dev@inbox.ru>
- * Copyright (C) 2021-2023 Filipe Coelho <falktx@falktx.com>
- * SPDX-License-Identifier: ISC
- */
-
 #include "DistrhoPlugin.hpp"
 #include "extra/ValueSmoother.hpp"
+
+#include "faust/dsp/poly-dsp.h"
+#include "faust/midi/midi.h"
+#include "faust/gui/PrintUI.h"
+#include "faust/gui/APIUI.h"
+#include "faust/gui/MidiUI.h"
+
+#include "dsp.hpp"
+
+std::list<GUI*> GUI::fGuiList;
+ztimedmap GUI::gTimedZoneMap;
+
+enum MidiStatus {
+    // channel voice messages
+    MIDI_NOTE_OFF = 0x80,
+    MIDI_NOTE_ON = 0x90,
+    MIDI_CONTROL_CHANGE = 0xB0,
+    MIDI_PROGRAM_CHANGE = 0xC0,
+    MIDI_PITCH_BEND = 0xE0,
+    MIDI_AFTERTOUCH = 0xD0,         // aka channel pressure
+    MIDI_POLY_AFTERTOUCH = 0xA0,    // aka key pressure
+    MIDI_CLOCK = 0xF8,
+    MIDI_START = 0xFA,
+    MIDI_CONT = 0xFB,
+    MIDI_STOP = 0xFC,
+    MIDI_SYSEX_START = 0xF0,
+    MIDI_SYSEX_STOP = 0xF7
+};
+
+struct FaustParam {
+    int index;
+    std::string label;
+    std::string shortname;
+    std::string address;
+    float init;
+    float min;
+    float max;
+    
+    FaustParam(int index, std::string label, std::string shortname, std::string address, float init, float min, float max) :
+        index(index),
+        label(label),
+        shortname(shortname),
+        address(address),
+        init(init),
+        min(min),
+        max(max) {
+        
+    }
+    
+    static bool isUserExposedParam(std::string label, std::string addr) {
+        if ((label == "gate")
+        || (label == "freq")
+        || (label == "key")
+        || (label == "gain")
+        || (label == "vel")
+        || (label == "velocity")
+        || (addr == "/Polyphonic/Voices/Panic")) {
+            return false;
+        } else {
+            return true;
+        }
+    }
+};
+
+class dpf_midi : public midi_handler {
+public:
+    void processMidiInBuffer(const MidiEvent* midiEvents, uint32_t midiEventCount)
+    {
+        for (size_t m = 0; m < midiEventCount; ++m) {
+            
+            MidiEvent event = midiEvents[m];
+            size_t nBytes = event.size;
+            int type = (int)event.data[0] & 0xf0;
+            int channel = (int)event.data[0] & 0x0f;
+            double time = event.frame; // Timestamp in frames
+
+            // MIDI sync
+            if (nBytes == 1) {
+                handleSync(time, (int)event.data[0]);
+            } else if (nBytes == 2) {
+                handleData1(time, type, channel, (int)event.data[1]);
+            } else if (nBytes == 3) {
+                handleData2(time, type, channel, (int)event.data[1], (int)event.data[2]);
+            } else {
+                std::vector<unsigned char> message(event.data, event.data + event.size);
+                handleMessage(time, type, message);
+            }
+        }
+    }
+    
+    dpf_midi(const std::string& name = "DPFHandler")
+        :midi_handler(name)
+    {
+    }
+    virtual ~dpf_midi()
+    {
+    }
+};
 
 START_NAMESPACE_DISTRHO
 
@@ -24,195 +115,171 @@ static constexpr const float DB_CO(float g)
 
 // --------------------------------------------------------------------------------------------------------------------
 
-class ImGuiPluginDSP : public Plugin
+class FaustDPFPluginDSP : public Plugin
 {
-    enum Parameters {
-        kParamGain = 0,
-        kParamCount
-    };
-
-    float fGainDB = 0.0f;
-    ExponentialValueSmoother fSmoothGain;
-
 public:
-   /**
-      Plugin class constructor.@n
-      You must set all parameter values to their defaults, matching ParameterRanges::def.
-    */
-    ImGuiPluginDSP()
-        : Plugin(kParamCount, 0, 0) // parameters, programs, states
+    dsp* DSP;
+    APIUI api;
+    
+    float** input_buffer;
+    
+    MidiUI* midiinterface;
+    dpf_midi* dpfmidi;
+    
+    float oneOverSr;
+    
+    float* fPwm;
+    
+    std::vector<FaustParam> faustParameters;
+    
+    FaustDPFPluginDSP(int numParams)
+        : Plugin(numParams, 0, 0) // parameters, programs, states
     {
-        fSmoothGain.setSampleRate(getSampleRate());
-        fSmoothGain.setTargetValue(DB_CO(0.f));
-        fSmoothGain.setTimeConstant(0.020f); // 20ms
+        DSP = new mydsp_poly(new mydsp(), POLYPHONY, true, true);
+        
+        input_buffer = new float*[2];
+        for (size_t i = 0; i < 2; i++) {
+            input_buffer[i] = new float[4096];
+        }
+        
+        DSP->buildUserInterface(&api);
+        int realParamCount{0};
+        auto paramCount = api.getParamsCount();
+        d_stdout("getParamsCount: %d", paramCount);
+        for (size_t p = 0; p < paramCount; p++) {
+            std::string label = api.getParamLabel(p);
+            std::string addr = api.getParamAddress(p);
+            if (FaustParam::isUserExposedParam(label, addr)) {
+                faustParameters.push_back(FaustParam(p, label, std::string(api.getParamShortname(p)), addr, api.getParamInit(p), api.getParamMin(p), api.getParamMax(p)));
+                realParamCount++;
+                d_stdout("%d -> %s (faust index %d)", realParamCount-1, api.getParamLabel(p), p);
+            }
+        }
+        // d_stdout("%d params", realParamCount);
+        
+        if (realParamCount != numParams) {
+            d_stdout("!!!!!!!!!!!!!");
+            DSP = nullptr;
+        }
     }
 
 protected:
-    // ----------------------------------------------------------------------------------------------------------------
-    // Information
-
-   /**
-      Get the plugin label.@n
-      This label is a short restricted name consisting of only _, a-z, A-Z and 0-9 characters.
-    */
-    const char* getLabel() const noexcept override
-    {
-        return "SimpleGain";
-    }
-
-   /**
-      Get an extensive comment/description about the plugin.@n
-      Optional, returns nothing by default.
-    */
-    const char* getDescription() const override
-    {
-        return "A simple audio volume gain plugin with ImGui for its GUI";
-    }
-
-   /**
-      Get the plugin author/maker.
-    */
-    const char* getMaker() const noexcept override
-    {
-        return "Jean Pierre Cimalando, falkTX";
-    }
-
-   /**
-      Get the plugin license (a single line of text or a URL).@n
-      For commercial plugins this should return some short copyright information.
-    */
-    const char* getLicense() const noexcept override
-    {
-        return "ISC";
-    }
-
-   /**
-      Get the plugin version, in hexadecimal.
-      @see d_version()
-    */
-    uint32_t getVersion() const noexcept override
-    {
-        return d_version(1, 0, 0);
-    }
-
-   /**
-      Get the plugin unique Id.@n
-      This value is used by LADSPA, DSSI and VST plugin formats.
-      @see d_cconst()
-    */
-    int64_t getUniqueId() const noexcept override
-    {
-        return d_cconst('d', 'I', 'm', 'G');
-    }
+    const char* getLabel() const noexcept override { return "FaustDSPMidiDemo"; }
+    const char* getDescription() const override { return ""; }
+    const char* getMaker() const noexcept override { return ""; }
+    const char* getLicense() const noexcept override { return ""; }
+    uint32_t getVersion() const noexcept override { return d_version(1, 0, 0); }
+    int64_t getUniqueId() const noexcept override { return d_cconst('d', 'F', 's', 't'); }
 
     // ----------------------------------------------------------------------------------------------------------------
     // Init
 
-   /**
-      Initialize the parameter @a index.@n
-      This function will be called once, shortly after the plugin is created.
-    */
     void initParameter(uint32_t index, Parameter& parameter) override
     {
-        DISTRHO_SAFE_ASSERT_RETURN(index == 0,);
-
-        parameter.ranges.min = -90.0f;
-        parameter.ranges.max = 30.0f;
-        parameter.ranges.def = 0.0f;
+        parameter.ranges.min = faustParameters[index].min;
+        parameter.ranges.max = faustParameters[index].max;
+        parameter.ranges.def = faustParameters[index].init;
         parameter.hints = kParameterIsAutomatable;
-        parameter.name = "Gain";
-        parameter.shortName = "Gain";
-        parameter.symbol = "gain";
-        parameter.unit = "dB";
+        switch (api.getParamItemType(faustParameters[index].index)) {
+                // parameter.hints |= kParameterIsTrigger;
+                // break;
+            case APIUI::kButton:
+            case APIUI::kCheckButton:
+                parameter.hints |= kParameterIsBoolean;
+                break;
+            case APIUI::kNumEntry:
+                parameter.hints |= kParameterIsInteger;
+                break;
+            case APIUI::kHBargraph:
+            case APIUI::kVBargraph:
+            case APIUI::kVSlider:
+            case APIUI::kHSlider:
+                break;
+        }
+        parameter.name = faustParameters[index].address.c_str();
+        parameter.shortName = faustParameters[index].shortname.c_str();
+        parameter.symbol = faustParameters[index].shortname.c_str();
+        parameter.unit = "";
     }
 
     // ----------------------------------------------------------------------------------------------------------------
     // Internal data
 
-   /**
-      Get the current value of a parameter.@n
-      The host may call this function from any context, including realtime processing.
-    */
     float getParameterValue(uint32_t index) const override
     {
-        DISTRHO_SAFE_ASSERT_RETURN(index == 0, 0.0f);
-
-        return fGainDB;
+        float ret = const_cast<APIUI&>(api).getParamValue(faustParameters[index].address.c_str());
+        return ret;
     }
 
-   /**
-      Change a parameter value.@n
-      The host may call this function from any context, including realtime processing.@n
-      When a parameter is marked as automatable, you must ensure no non-realtime operations are performed.
-      @note This function will only be called for parameter inputs.
-    */
     void setParameterValue(uint32_t index, float value) override
     {
-        DISTRHO_SAFE_ASSERT_RETURN(index == 0,);
-
-        fGainDB = value;
-        fSmoothGain.setTargetValue(DB_CO(CLAMP(value, -90.0, 30.0)));
+        api.setParamValue(faustParameters[index].address.c_str(), value);
+        GUI::updateAllGuis();
     }
 
     // ----------------------------------------------------------------------------------------------------------------
     // Audio/MIDI Processing
 
-   /**
-      Activate this plugin.
-    */
     void activate() override
     {
-        fSmoothGain.clearToTargetValue();
+        oneOverSr = 1/getSampleRate();
+        
+        mydsp_poly* dsp_poly = dynamic_cast<mydsp_poly*>(DSP);
+        dsp_poly->init(getSampleRate());
+        
+        dpfmidi = new dpf_midi();
+        midiinterface = new MidiUI(dpfmidi);
+        dsp_poly->buildUserInterface(midiinterface);
     }
 
-   /**
-      Run/process function for plugins without MIDI input.
-      @note Some parameters might be null if there are no audio inputs or outputs.
-    */
-    void run(const float** inputs, float** outputs, uint32_t frames) override
+    void run(const float** inputs, float** outputs, uint32_t frames,
+                     const MidiEvent* midiEvents, uint32_t midiEventCount) override
     {
-        // get the left and right audio inputs
-        const float* const inpL = inputs[0];
-        const float* const inpR = inputs[1];
-
-        // get the left and right audio outputs
-        float* const outL = outputs[0];
-        float* const outR = outputs[1];
-
-        // apply gain against all samples
-        for (uint32_t i=0; i < frames; ++i)
-        {
-            const float gain = fSmoothGain.next();
-            outL[i] = inpL[i] * gain;
-            outR[i] = inpR[i] * gain;
+        dpfmidi->processMidiInBuffer(midiEvents, midiEventCount);
+        
+        if (midiEventCount) {
+            GUI::updateAllGuis();
         }
+        
+        std::copy_n(inputs[0], frames, input_buffer[0]);
+        std::copy_n(inputs[1], frames, input_buffer[1]);
+        
+        DSP->compute(frames, input_buffer, outputs);
     }
 
     // ----------------------------------------------------------------------------------------------------------------
     // Callbacks (optional)
 
-   /**
-      Optional callback to inform the plugin about a sample rate change.@n
-      This function will only be called when the plugin is deactivated.
-      @see getSampleRate()
-    */
     void sampleRateChanged(double newSampleRate) override
     {
-        fSmoothGain.setSampleRate(newSampleRate);
     }
 
     // ----------------------------------------------------------------------------------------------------------------
 
-    DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ImGuiPluginDSP)
+    DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FaustDPFPluginDSP)
 };
 
 // --------------------------------------------------------------------------------------------------------------------
 
 Plugin* createPlugin()
 {
-    return new ImGuiPluginDSP();
+    auto DSP = new mydsp_poly(new mydsp(), POLYPHONY, true, true);
+    APIUI api;
+    DSP->buildUserInterface(&api);
+    
+    auto UIParamsCount = api.getParamsCount();
+    for (size_t p = 0; p < api.getParamsCount(); p++) {
+        std::string label = api.getParamLabel(p);
+        std::string addr = api.getParamAddress(p);
+        if (!FaustParam::isUserExposedParam(label, addr)) { UIParamsCount--; }
+    }
+    
+    delete DSP;
+    
+    return new FaustDPFPluginDSP(UIParamsCount);
 }
 
 // --------------------------------------------------------------------------------------------------------------------
 
 END_NAMESPACE_DISTRHO
+ 

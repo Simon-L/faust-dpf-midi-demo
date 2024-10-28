@@ -1,5 +1,4 @@
-# DPF + ImGui template plugin project
+# DPF + Faust MIDI plugin demo
 
-This repository contains an example audio plugin project using DPF and ImGui.
-
-![Screenshot](Screenshot.png "Screenshot")
+> Based on https://github.com/DISTRHO/imgui-template-plugin
+> See repo for authorship

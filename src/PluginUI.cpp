@@ -1,10 +1,3 @@
-/*
- * ImGui plugin example
- * Copyright (C) 2021 Jean Pierre Cimalando <jp-dev@inbox.ru>
- * Copyright (C) 2021-2022 Filipe Coelho <falktx@falktx.com>
- * SPDX-License-Identifier: ISC
- */
-
 #include "DistrhoUI.hpp"
 #include "ResizeHandle.hpp"
 
@@ -12,7 +5,7 @@ START_NAMESPACE_DISTRHO
 
 // --------------------------------------------------------------------------------------------------------------------
 
-class ImGuiPluginUI : public UI
+class FaustDPFPluginUI : public UI
 {
     float fGain = 0.0f;
     ResizeHandle fResizeHandle;
@@ -24,7 +17,7 @@ public:
       UI class constructor.
       The UI should be initialized to a default state that matches the plugin side.
     */
-    ImGuiPluginUI()
+    FaustDPFPluginUI()
         : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT, true),
           fResizeHandle(this)
     {
@@ -71,30 +64,30 @@ protected:
             static char aboutText[256] = "This is a demo plugin made with ImGui.\n";
             ImGui::InputTextMultiline("About", aboutText, sizeof(aboutText));
 
-            if (ImGui::SliderFloat("Gain (dB)", &fGain, -90.0f, 30.0f))
-            {
-                if (ImGui::IsItemActivated())
-                    editParameter(0, true);
-
-                setParameterValue(0, fGain);
-            }
-
-            if (ImGui::IsItemDeactivated())
-            {
-                editParameter(0, false);
-            }
+            // if (ImGui::SliderFloat("Gain (dB)", &fGain, -90.0f, 30.0f))
+            // {
+            //     if (ImGui::IsItemActivated())
+            //         editParameter(0, true);
+            // 
+            //     setParameterValue(0, fGain);
+            // }
+            // 
+            // if (ImGui::IsItemDeactivated())
+            // {
+            //     editParameter(0, false);
+            // }
         }
         ImGui::End();
     }
 
-    DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ImGuiPluginUI)
+    DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FaustDPFPluginUI)
 };
 
 // --------------------------------------------------------------------------------------------------------------------
 
 UI* createUI()
 {
-    return new ImGuiPluginUI();
+    return new FaustDPFPluginUI();
 }
 
 // --------------------------------------------------------------------------------------------------------------------

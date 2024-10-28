@@ -1,5 +1,4 @@
 /*
- * ImGui plugin example
  * Copyright (C) 2021 Jean Pierre Cimalando <jp-dev@inbox.ru>
  * Copyright (C) 2021-2022 Filipe Coelho <falktx@falktx.com>
  * SPDX-License-Identifier: ISC
@@ -10,7 +9,7 @@
    This is used to identify your plugin before a Plugin instance can be created.
    @note This macro is required.
  */
-#define DISTRHO_PLUGIN_NAME "ImGuiSimpleGain"
+#define DISTRHO_PLUGIN_NAME "FaustDSPMidiDemo"
 
 /**
    Number of audio inputs the plugin has.
@@ -28,14 +27,14 @@
    The plugin URI when exporting in LV2 format.
    @note This macro is required.
  */
-#define DISTRHO_PLUGIN_URI "urn:distrho:examples:imguisimplegain"
+#define DISTRHO_PLUGIN_URI "urn:faustdspmididemo"
 
 /**
    Whether the plugin has a custom %UI.
    @see DISTRHO_UI_USE_NANOVG
    @see UI
  */
-#define DISTRHO_PLUGIN_HAS_UI 1
+#define DISTRHO_PLUGIN_HAS_UI 0
 
 /**
    Whether the plugin processing is realtime-safe.@n
@@ -48,7 +47,7 @@
    @ref DISTRHO_PLUGIN_WANT_MIDI_INPUT is automatically enabled when this is too.
    @see DISTRHO_PLUGIN_WANT_MIDI_INPUT
  */
-#define DISTRHO_PLUGIN_IS_SYNTH 0
+#define DISTRHO_PLUGIN_IS_SYNTH 1
 
 /**
    Enable direct access between the %UI and plugin code.
@@ -68,13 +67,13 @@
    Whether the plugin wants MIDI input.@n
    This is automatically enabled if @ref DISTRHO_PLUGIN_IS_SYNTH is true.
  */
-#define DISTRHO_PLUGIN_WANT_MIDI_INPUT 0
+#define DISTRHO_PLUGIN_WANT_MIDI_INPUT 1
 
 /**
    Whether the plugin wants MIDI output.
    @see Plugin::writeMidiEvent(const MidiEvent&)
  */
-#define DISTRHO_PLUGIN_WANT_MIDI_OUTPUT 0
+#define DISTRHO_PLUGIN_WANT_MIDI_OUTPUT 1
 
 /**
    Whether the plugin wants to change its own parameter inputs.@n
@@ -223,7 +222,7 @@
 
    See http://lv2plug.in/ns/lv2core for more information.
  */
-#define DISTRHO_PLUGIN_LV2_CATEGORY "lv2:AmplifierPlugin"
+#define DISTRHO_PLUGIN_LV2_CATEGORY "lv2:MIDIPlugin"
 
 /**
    Custom VST3 categories for the plugin.@n
@@ -267,7 +266,7 @@
       - Mono
       - Stereo
  */
-#define DISTRHO_PLUGIN_VST3_CATEGORIES "Fx|Dynamics|Stereo"
+#define DISTRHO_PLUGIN_VST3_CATEGORIES "Instrument|Stereo"
 
 /**
    Custom CLAP features for the plugin.@n
@@ -325,10 +324,10 @@
       - surround
       - ambisonic
 */
-#define DISTRHO_PLUGIN_CLAP_FEATURES "audio-effect", "stereo"
+#define DISTRHO_PLUGIN_CLAP_FEATURES "instrument", "stereo"
 
 /**
    The plugin id when exporting in CLAP format, in reverse URI form.
    @note This macro is required when building CLAP plugins
 */
-#define DISTRHO_PLUGIN_CLAP_ID "studio.kx.distrho.examples.imguisimplegain"
+#define DISTRHO_PLUGIN_CLAP_ID "foo.bar.faustdspmididemo"

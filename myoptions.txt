@@ -1,0 +1,2 @@
+set(FAUST_INVOCATION /some/path/bin/faust -I /some/path/share/faust CACHE STRING "faust invocation command")
+set(EXTRA_INCLUDES /some/path/include CACHE STRING "extra include path")
